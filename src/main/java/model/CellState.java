@@ -1,4 +1,2 @@
 package model;
-
-public enum CellState {
-}
+public enum CellState { WATER, SHIP, HIT, MISS, SUNK }

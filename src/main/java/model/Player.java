@@ -6,47 +6,45 @@ public class Player {
     private String password;
     private int points;
     private String[] lastGames;
-    private int logIndex;
-    private Board board;
+    private CellState[][] board;
 
     public Player(String username, String password) {
         this.username = username;
         this.password = password;
         this.points = 0;
         this.lastGames = new String[10];
-        this.logIndex = 0;
-        this.board = new Board();
+
+        board = new CellState[8][8];
+        initBoard();
     }
 
-    public void addGameLog(String log) {
-        for (int i = lastGames.length - 1; i > 0; i--) {
-            lastGames[i] = lastGames[i - 1];
+    private void initBoard() {
+        for (int i = 0; i < 8; i++) {
+            for (int j = 0; j < 8; j++) {
+                board[i][j] = CellState.WATER;
+            }
         }
-        lastGames[0] = log;
     }
 
-    public String[] getLastGames() {
-        return lastGames;
+
+    public CellState[][] getBoard() {
+        return board;
+    }
+
+    public CellState getCell(int row, int col) {
+        return board[row][col];
+    }
+
+    public void setCell(int row, int col, CellState state) {
+        board[row][col] = state;
     }
 
     public String getUsername() {
         return username;
     }
 
-    public void setUsername(String username) {
-        if (!username.isEmpty()) {
-            this.username = username;
-        }
-    }
-
-    public String getPassword() {
-        return password;
-    }
-
-    public void setPassword(String password) {
-        if (password.length() >= 4) {
-            this.password = password;
-        }
+    public boolean checkPassword(String password) {
+        return this.password.equals(password);
     }
 
     public int getPoints() {
@@ -54,10 +52,6 @@ public class Player {
     }
 
     public void addPoints(int p) {
-        this.points += p;
-    }
-
-    public Board getBoard() {
-        return board;
+        points += p;
     }
 }
