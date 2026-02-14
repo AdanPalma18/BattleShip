@@ -18,7 +18,27 @@ public class BoardPanel extends JPanel {
     private int previewCol = -1;
     private boolean previewVertical = true;
     private int currentDragSize = -1;
-    private GamePanel gamePanel; // Referencia al GamePanel para acceder a los métodos
+    private boolean currentDragVertical = true;
+    private boolean defaultDragVertical = true;
+    private boolean isDragging = false;
+    private GamePanel gamePanel;
+    private String currentDragShipType = null;
+    
+    public boolean isDragging() {
+        return isDragging;
+    }
+    
+    public void handleDragEvent(int x, int y) {
+        handleDrag(x, y);
+    }
+    
+    public void handleDropEvent(int x, int y) {
+        handleDrop(x, y);
+    }
+    
+    public void cancelDrag() {
+        clearDrag();
+    }
 
     public BoardPanel(GamePanel gamePanel) {
         this.gamePanel = gamePanel;
@@ -32,313 +52,160 @@ public class BoardPanel extends JPanel {
             }
         }
 
-        setDropTarget(new DropTarget(this, DnDConstants.ACTION_COPY, new DropTargetAdapter() {
-
+        // Sistema de drag simulado con eventos de mouse
+        setFocusable(true);
+        addKeyListener(new java.awt.event.KeyAdapter() {
             @Override
-            public void dragEnter(DropTargetDragEvent dtde) {
-                System.out.println("dragEnter: DataFlavors disponibles: " + java.util.Arrays.toString(dtde.getCurrentDataFlavors()));
-                
-                // Intentar encontrar cualquier DataFlavor que represente String
-                DataFlavor stringFlavor = null;
-                for (DataFlavor flavor : dtde.getCurrentDataFlavors()) {
-                    // Verificar si es String directamente o si la clase de representación es String
-                    if (flavor.isFlavorTextType() || 
-                        flavor.equals(DataFlavor.stringFlavor) ||
-                        String.class.equals(flavor.getRepresentationClass())) {
-                        stringFlavor = flavor;
-                        System.out.println("dragEnter: Encontrado DataFlavor: " + flavor);
+            public void keyPressed(java.awt.event.KeyEvent e) {
+                if (e.getKeyCode() == java.awt.event.KeyEvent.VK_R && isDragging) {
+                    handleRotation();
+                } else if (e.getKeyCode() == java.awt.event.KeyEvent.VK_R && !isDragging) {
+                    defaultDragVertical = !defaultDragVertical;
+                }
+            }
+        });
+        
+        addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseReleased(java.awt.event.MouseEvent e) {
+                if (isDragging && currentDragSize > 0 && currentDragShipType != null) {
+                    handleDrop(e.getX(), e.getY());
+                }
+            }
+        });
+        
+        addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
+            @Override
+            public void mouseDragged(java.awt.event.MouseEvent e) {
+                if (isDragging && currentDragSize > 0) {
+                    handleDrag(e.getX(), e.getY());
+                }
+            }
+        });
+    }
+    
+    // Método para iniciar el drag simulado desde GamePanel
+    public void startSimulatedDrag(String shipType, int size) {
+        // Solo permitir drag durante la fase de colocación
+        if (gamePanel != null && gamePanel.getBattleShip().isPlacementPhase()) {
+            isDragging = true;
+            currentDragShipType = shipType;
+            currentDragSize = size;
+            currentDragVertical = defaultDragVertical;
+            requestFocusInWindow();
+        }
+    }
+    
+    private void handleDrag(int x, int y) {
+        if (getWidth() <= 0 || getHeight() <= 0) return;
+        
+        int cellW = getWidth() / COLS;
+        int cellH = getHeight() / ROWS;
+        
+        int col = Math.max(0, Math.min(COLS - 1, x / cellW));
+        int row = Math.max(0, Math.min(ROWS - 1, y / cellH));
+        
+        boolean vertical = currentDragVertical;
+        boolean canShowPreview = true;
+        
+        // Verificar si hay otro barco en esa posición
+        for (int i = 0; i < currentDragSize; i++) {
+            int r = row + (vertical ? i : 0);
+            int c = col + (vertical ? 0 : i);
+            if (r >= 0 && r < ROWS && c >= 0 && c < COLS) {
+                if (cells[r][c].hasShip()) {
+                    String existingShipType = cells[r][c].getShipType();
+                    if (currentDragShipType == null || !existingShipType.equals(currentDragShipType)) {
+                        canShowPreview = false;
                         break;
                     }
                 }
-                
-                if (stringFlavor == null && dtde.isDataFlavorSupported(DataFlavor.stringFlavor)) {
-                    stringFlavor = DataFlavor.stringFlavor;
-                }
-                
-                if (stringFlavor != null) {
-                    try {
-                        String data = (String) dtde.getTransferable().getTransferData(stringFlavor);
-                        System.out.println("dragEnter: Datos recibidos: " + data);
-                        String[] parts = data.split(":");
-                        if (parts.length >= 2) {
-                            currentDragSize = Integer.parseInt(parts[1]);
-                            System.out.println("dragEnter: Tamaño del barco: " + currentDragSize);
-                            dtde.acceptDrag(DnDConstants.ACTION_COPY);
-                        } else {
-                            System.out.println("dragEnter: Formato de datos inválido");
-                            currentDragSize = -1;
-                            dtde.rejectDrag();
-                        }
-                    } catch (Exception e) {
-                        System.out.println("dragEnter error: " + e.getMessage());
-                        e.printStackTrace();
-                        currentDragSize = -1;
-                        dtde.rejectDrag();
-                    }
-                } else {
-                    System.out.println("dragEnter: No se encontró DataFlavor de string");
-                    dtde.rejectDrag();
-                }
             }
-
-            @Override
-            public void dragOver(DropTargetDragEvent dtde) {
-                // Verificar si hay algún DataFlavor que represente String
-                boolean hasStringFlavor = false;
-                for (DataFlavor flavor : dtde.getCurrentDataFlavors()) {
-                    if (flavor.isFlavorTextType() || 
-                        flavor.equals(DataFlavor.stringFlavor) ||
-                        String.class.equals(flavor.getRepresentationClass())) {
-                        hasStringFlavor = true;
+        }
+        
+        if (canShowPreview) {
+            showPreview(row, col, currentDragSize, vertical);
+        } else {
+            clearPreview();
+        }
+    }
+    
+    private void handleDrop(int x, int y) {
+        if (getWidth() <= 0 || getHeight() <= 0) {
+            clearDrag();
+            return;
+        }
+        
+        int cellW = getWidth() / COLS;
+        int cellH = getHeight() / ROWS;
+        
+        int col = Math.max(0, Math.min(COLS - 1, x / cellW));
+        int row = Math.max(0, Math.min(ROWS - 1, y / cellH));
+        
+        boolean vertical = currentDragVertical;
+        boolean fits;
+        if (vertical) {
+            fits = (row + currentDragSize <= ROWS);
+        } else {
+            fits = (col + currentDragSize <= COLS);
+        }
+        
+        if (!fits) {
+            clearDrag();
+            return;
+        }
+        
+        // Verificar si hay otro barco
+        boolean hasOtherShip = false;
+        for (int i = 0; i < currentDragSize; i++) {
+            int r = row + (vertical ? i : 0);
+            int c = col + (vertical ? 0 : i);
+            if (r >= 0 && r < ROWS && c >= 0 && c < COLS) {
+                if (cells[r][c].hasShip()) {
+                    String existingShipType = cells[r][c].getShipType();
+                    if (currentDragShipType == null || !existingShipType.equals(currentDragShipType)) {
+                        hasOtherShip = true;
                         break;
                     }
                 }
-                
-                if (!hasStringFlavor && !dtde.isDataFlavorSupported(DataFlavor.stringFlavor)) {
-                    // No mostrar mensaje repetitivo, solo limpiar preview
-                    clearPreview();
-                    dtde.rejectDrag();
-                    return;
-                }
-                
-                if (currentDragSize <= 0) {
-                    clearPreview();
-                    dtde.rejectDrag();
-                    return;
-                }
-
-                try {
-                    Point p = dtde.getLocation();
-                    int cellW = getWidth() / COLS;
-                    int cellH = getHeight() / ROWS;
-
-                    int col = Math.max(0, Math.min(COLS - 1, p.x / cellW));
-                    int row = Math.max(0, Math.min(ROWS - 1, p.y / cellH));
-
-                    // Usar orientación vertical fija
-                    boolean vertical = true;
-
-                    // Verificar que no haya otros barcos en las celdas del preview
-                    // (permitir si es el mismo barco que se está moviendo)
-                    boolean canShowPreview = true;
-                    String draggedShipType = null;
-                    
-                    // Intentar obtener el tipo del barco que se está arrastrando
-                    DataFlavor dragStringFlavor = null;
-                    for (DataFlavor flavor : dtde.getCurrentDataFlavors()) {
-                        if (flavor.isFlavorTextType() || 
-                            flavor.equals(DataFlavor.stringFlavor) ||
-                            String.class.equals(flavor.getRepresentationClass())) {
-                            dragStringFlavor = flavor;
-                            break;
-                        }
-                    }
-                    
-                    if (dragStringFlavor == null && dtde.isDataFlavorSupported(DataFlavor.stringFlavor)) {
-                        dragStringFlavor = DataFlavor.stringFlavor;
-                    }
-                    
-                    if (dragStringFlavor != null) {
-                        try {
-                            String data = (String) dtde.getTransferable().getTransferData(dragStringFlavor);
-                            String[] parts = data.split(":");
-                            if (parts.length >= 1) {
-                                draggedShipType = parts[0];
-                            }
-                        } catch (Exception e) {
-                            // Si no se puede obtener, continuar sin validación de tipo
-                        }
-                    }
-
-                    for (int i = 0; i < currentDragSize; i++) {
-                        int r = row + (vertical ? i : 0);
-                        int c = col + (vertical ? 0 : i);
-                        if (r >= 0 && r < ROWS && c >= 0 && c < COLS) {
-                            if (cells[r][c].hasShip()) {
-                                String existingShipType = cells[r][c].getShipType();
-                                // Permitir preview si es el mismo barco (está moviéndolo)
-                                if (draggedShipType == null || !existingShipType.equals(draggedShipType)) {
-                                    canShowPreview = false;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    if (canShowPreview) {
-                        showPreview(row, col, currentDragSize, vertical);
-                        dtde.acceptDrag(DnDConstants.ACTION_COPY);
-                    } else {
-                        clearPreview();
-                        dtde.rejectDrag();
-                    }
-
-                } catch (Exception e) {
-                    System.out.println("dragOver error: " + e.getMessage());
-                    clearPreview();
-                    dtde.rejectDrag();
-                }
             }
-
-            @Override
-            public void dragExit(DropTargetEvent dte) {
-                clearPreview();
-                currentDragSize = -1;
+        }
+        
+        if (hasOtherShip) {
+            clearDrag();
+            return;
+        }
+        
+        // Colocar el barco
+        if (currentDragShipType != null) {
+            placeShip(currentDragShipType, currentDragSize, row, col, vertical);
+        }
+        
+        clearDrag();
+    }
+    
+    private void clearDrag() {
+        clearPreview();
+        currentDragSize = -1;
+        currentDragShipType = null;
+        isDragging = false;
+    }
+    
+    private void handleRotation() {
+        // Permitir rotación si hay un drag activo, incluso si no hay preview (cuando sales del tablero)
+        if (isDragging && currentDragSize > 0) {
+            currentDragVertical = !currentDragVertical;
+            // Si hay preview activo, actualizarlo con la nueva orientación
+            if (previewShipSize > 0 && previewRow >= 0 && previewCol >= 0) {
+                showPreview(previewRow, previewCol, previewShipSize, currentDragVertical);
             }
-
-            @Override
-            public void drop(DropTargetDropEvent dtde) {
-                System.out.println("Drop event recibido");
-                System.out.println("Drop: DataFlavors disponibles: " + java.util.Arrays.toString(dtde.getCurrentDataFlavors()));
-                
-                // Intentar encontrar cualquier DataFlavor que represente String
-                DataFlavor stringFlavor = null;
-                for (DataFlavor flavor : dtde.getCurrentDataFlavors()) {
-                    if (flavor.isFlavorTextType() || 
-                        flavor.equals(DataFlavor.stringFlavor) ||
-                        String.class.equals(flavor.getRepresentationClass())) {
-                        stringFlavor = flavor;
-                        System.out.println("Drop: Encontrado DataFlavor: " + flavor);
-                        break;
-                    }
-                }
-                
-                if (stringFlavor == null && dtde.isDataFlavorSupported(DataFlavor.stringFlavor)) {
-                    stringFlavor = DataFlavor.stringFlavor;
-                }
-                
-                if (stringFlavor == null) {
-                    System.out.println("Drop: No se encontró DataFlavor de string");
-                    dtde.rejectDrop();
-                    clearPreview();
-                    return;
-                }
-
-                try {
-                    dtde.acceptDrop(DnDConstants.ACTION_COPY);
-                    System.out.println("Drop aceptado");
-
-                    String data = (String) dtde.getTransferable().getTransferData(stringFlavor);
-                    System.out.println("Datos recibidos: " + data);
-
-                    String[] parts = data.split(":");
-                    if (parts.length < 2) {
-                        System.out.println("Formato de datos inválido");
-                        dtde.dropComplete(false);
-                        clearPreview();
-                        return;
-                    }
-
-                    String shipType = parts[0];
-                    int size = Integer.parseInt(parts[1]);
-
-                    Point p = dtde.getLocation();
-                    if (getWidth() <= 0 || getHeight() <= 0) {
-                        System.out.println("Panel sin tamaño");
-                        dtde.dropComplete(false);
-                        clearPreview();
-                        return;
-                    }
-
-                    int cellW = getWidth() / COLS;
-                    int cellH = getHeight() / ROWS;
-
-                    int col = Math.max(0, Math.min(COLS - 1, p.x / cellW));
-                    int row = Math.max(0, Math.min(ROWS - 1, p.y / cellH));
-
-                    // Verificar si cabe en la posición
-                    boolean vertical = true;
-                    boolean fits = (row + size <= ROWS);
-
-                    if (!fits) {
-                        System.out.println(
-                                "No se puede colocar " + shipType +
-                                " (tamaño " + size + ") en (" + row + "," + col +
-                                ") - No cabe en el tablero"
-                        );
-                        clearPreview();
-                        dtde.dropComplete(false);
-                        return;
-                    }
-
-                    // Verificar que no haya otros barcos en las celdas donde se va a colocar
-                    // (excepto el mismo barco si se está moviendo)
-                    boolean hasOtherShip = false;
-                    for (int i = 0; i < size; i++) {
-                        int r = row + (vertical ? i : 0);
-                        int c = col + (vertical ? 0 : i);
-                        if (r >= 0 && r < ROWS && c >= 0 && c < COLS) {
-                            if (cells[r][c].hasShip()) {
-                                String existingShipType = cells[r][c].getShipType();
-                                // Permitir si es el mismo barco (está moviéndolo)
-                                if (!existingShipType.equals(shipType)) {
-                                    hasOtherShip = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    if (hasOtherShip) {
-                        System.out.println(
-                                "No se puede colocar " + shipType +
-                                " (tamaño " + size + ") en (" + row + "," + col +
-                                ") - Ya hay otro barco en esa posición"
-                        );
-                        clearPreview();
-                        dtde.dropComplete(false);
-                        return;
-                    }
-
-                    // Mostrar las casillas que ocupa
-                    StringBuilder casillas = new StringBuilder();
-                    for (int i = 0; i < size; i++) {
-                        int r = row + (vertical ? i : 0);
-                        int c = col + (vertical ? 0 : i);
-                        if (i > 0) casillas.append(", ");
-                        casillas.append("(").append(r).append(",").append(c).append(")");
-                    }
-
-                    System.out.println(
-                            "Barco " + shipType + " (tamaño " + size + ") soltado en casilla inicial: (" + row + "," + col + ")"
-                    );
-                    System.out.println(
-                            "Ocupa las casillas: " + casillas.toString()
-                    );
-
-                    // Guardar si el barco ya existe antes de hacer el drop
-                    final boolean shipExists = checkShipExists(shipType);
-                    
-                    // Marcar que el drop se completó primero
-                    dtde.dropComplete(true);
-                    
-                    // Usar SwingUtilities.invokeLater para diferir la colocación del barco
-                    // hasta que el drag termine completamente
-                    javax.swing.SwingUtilities.invokeLater(() -> {
-                        // Colocar el barco visualmente en el tablero
-                        placeShip(shipType, size, row, col, vertical);
-                        
-                        // Limpiar los TransferHandlers del barco anterior si existía
-                        // Solo después de que el drag haya terminado completamente
-                        if (shipExists) {
-                            javax.swing.SwingUtilities.invokeLater(() -> {
-                                javax.swing.SwingUtilities.invokeLater(() -> {
-                                    cleanupOldShipHandlers(shipType);
-                                });
-                            });
-                        }
-                    });
-
-                    clearPreview();
-
-                } catch (Exception e) {
-                    System.out.println("Error al soltar: " + e.getMessage());
-                    e.printStackTrace();
-                    clearPreview();
-                    dtde.dropComplete(false);
-                }
-            }
-        }));
+            // Si no hay preview pero hay drag activo, solo cambiar la orientación
+            // La próxima vez que el mouse entre al tablero, usará la nueva orientación
+        }
+    }
+    
+    public void rotateCurrentPreview() {
+        handleRotation();
     }
 
     public void setCellListener(BoardCellListener listener) {
@@ -350,14 +217,28 @@ public class BoardPanel extends JPanel {
     }
 
     public void updateBoard(CellState[][] board) {
+        if (board == null) return;
+        for (int i = 0; i < ROWS && i < board.length; i++) {
+            for (int j = 0; j < COLS && j < board[i].length; j++) {
+                cells[i][j].setState(board[i][j]);
+            }
+        }
+        repaint();
+    }
+
+    public void setTutorialMode(boolean tutorialMode) {
         for (int i = 0; i < ROWS; i++) {
             for (int j = 0; j < COLS; j++) {
-                cells[i][j].setState(board[i][j]);
+                cells[i][j].setTutorialMode(tutorialMode);
             }
         }
     }
 
     private void showPreview(int row, int col, int size, boolean vertical) {
+        if (previewShipSize == size && previewRow == row && previewCol == col && previewVertical == vertical) {
+            return;
+        }
+        
         clearPreview();
         
         previewShipSize = size;
@@ -365,7 +246,6 @@ public class BoardPanel extends JPanel {
         previewCol = col;
         previewVertical = vertical;
 
-        // Verificar si cabe
         boolean fits = true;
         if (vertical) {
             if (row + size > ROWS) fits = false;
@@ -389,7 +269,7 @@ public class BoardPanel extends JPanel {
         repaint();
     }
 
-    private void clearPreview() {
+    public void clearPreview() {
         if (previewShipSize > 0) {
             for (int i = 0; i < previewShipSize; i++) {
                 int r = previewRow + (previewVertical ? i : 0);
@@ -404,7 +284,6 @@ public class BoardPanel extends JPanel {
     }
 
     private void placeShip(String shipType, int size, int row, int col, boolean vertical) {
-        // Guardar si el barco ya existe para quitarlo después de colocar el nuevo
         boolean shipExists = false;
         for (int i = 0; i < ROWS; i++) {
             for (int j = 0; j < COLS; j++) {
@@ -416,14 +295,13 @@ public class BoardPanel extends JPanel {
             if (shipExists) break;
         }
         
-        // Si el barco ya existe, quitarlo primero (pero guardar los TransferHandlers temporalmente)
         if (shipExists) {
             removeShipWithoutClearingHandlers(shipType);
         }
         
         int cellSize = getCellSize();
         if (cellSize <= 0) {
-            cellSize = 420 / 8; // Fallback
+            cellSize = 420 / 8;
         }
 
         for (int i = 0; i < size; i++) {
@@ -431,29 +309,48 @@ public class BoardPanel extends JPanel {
             int c = col + (vertical ? 0 : i);
             
             if (r >= 0 && r < ROWS && c >= 0 && c < COLS) {
-                // Determinar qué parte del barco va en esta celda
-                int partNumber = i + 1; // Las partes van de 1 a size
+                int partNumber = i + 1;
                 String imagePath = "/ships/" + shipType + "_" + partNumber + ".png";
                 
-                // Cargar la imagen
                 java.net.URL resource = getClass().getResource(imagePath);
                 if (resource != null) {
                     ImageIcon icon = new ImageIcon(resource);
-                    Image original = icon.getImage();
                     
-                    // Escalar la imagen al tamaño de la celda
-                    Image scaled = original.getScaledInstance(
-                            cellSize,
-                            cellSize,
-                            Image.SCALE_SMOOTH
+                    java.awt.image.BufferedImage originalBuffered = new java.awt.image.BufferedImage(
+                        icon.getIconWidth(), icon.getIconHeight(), 
+                        java.awt.image.BufferedImage.TYPE_INT_ARGB
                     );
+                    java.awt.Graphics2D g = originalBuffered.createGraphics();
+                    g.drawImage(icon.getImage(), 0, 0, null);
+                    g.dispose();
                     
-                    // Colocar la imagen en la celda y guardar información del barco
-                    cells[r][c].setShipImage(scaled, shipType + "_" + partNumber);
+                    java.awt.image.BufferedImage scaled = new java.awt.image.BufferedImage(
+                        cellSize, cellSize, java.awt.image.BufferedImage.TYPE_INT_ARGB
+                    );
+                    java.awt.Graphics2D g2 = scaled.createGraphics();
+                    g2.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, 
+                                       java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                    g2.setRenderingHint(java.awt.RenderingHints.KEY_RENDERING, 
+                                       java.awt.RenderingHints.VALUE_RENDER_QUALITY);
+                    g2.drawImage(originalBuffered, 0, 0, cellSize, cellSize, null);
+                    g2.dispose();
+                    
+                    Image finalImage = scaled;
+                    if (!vertical) {
+                        System.out.println("DEBUG ROTATE: Rotando imagen para barco horizontal - shipType=" + shipType + ", part=" + partNumber);
+                        finalImage = rotateImage90(scaled, cellSize);
+                        if (finalImage == null) {
+                            System.out.println("ERROR: rotateImage90 retornó null, usando imagen sin rotar");
+                            finalImage = scaled;
+                        } else {
+                            System.out.println("DEBUG ROTATE: Imagen rotada exitosamente");
+                        }
+                    }
+                    
+                    cells[r][c].setShipImage(finalImage, shipType + "_" + partNumber);
                     cells[r][c].setState(model.CellState.SHIP);
                     cells[r][c].setShipInfo(shipType, size, row, col, vertical, i);
                     
-                    // Hacer la celda arrastrable
                     makeCellDraggable(cells[r][c], shipType, size);
                 } else {
                     System.out.println("No se encontró imagen: " + imagePath);
@@ -461,21 +358,13 @@ public class BoardPanel extends JPanel {
             }
         }
         
-        // Ocultar el label del sidebar
         if (gamePanel != null) {
             gamePanel.hideShipLabel(shipType);
+            gamePanel.saveShipToBattleShip(shipType, size, row, col, vertical);
         }
         
-        // Limpiar los handlers antiguos después de múltiples invocaciones
-        // para asegurar que el drag haya terminado completamente
         if (shipExists) {
-            javax.swing.SwingUtilities.invokeLater(() -> {
-                javax.swing.SwingUtilities.invokeLater(() -> {
-                    javax.swing.SwingUtilities.invokeLater(() -> {
-                        cleanupOldShipHandlers(shipType);
-                    });
-                });
-            });
+            cleanupOldShipHandlers(shipType);
         }
         
         repaint();
@@ -497,11 +386,9 @@ public class BoardPanel extends JPanel {
     }
 
     private void cleanupOldShipHandlers(String shipType) {
-        // Limpiar TransferHandlers de celdas que ya no tienen barco pero aún tienen handler
         for (int i = 0; i < ROWS; i++) {
             for (int j = 0; j < COLS; j++) {
                 if (!cells[i][j].hasShip() && cells[i][j].getTransferHandler() != null) {
-                    // Verificar si el handler es de este tipo de barco
                     cells[i][j].setTransferHandler(null);
                 }
             }
@@ -509,41 +396,40 @@ public class BoardPanel extends JPanel {
     }
 
     private void removeShipWithoutClearingHandlers(String shipType) {
+        java.util.Set<java.awt.Point> cellsToClear = new java.util.HashSet<>();
+        
         for (int i = 0; i < ROWS; i++) {
             for (int j = 0; j < COLS; j++) {
                 if (cells[i][j].hasShip() && cells[i][j].getShipType().equals(shipType)) {
-                    // Encontrar todas las celdas del barco y limpiarlas (pero mantener handlers)
                     BoardCell.ShipInfo info = cells[i][j].getShipInfo();
                     if (info != null) {
                         for (int k = 0; k < info.size; k++) {
                             int r = info.startRow + (info.vertical ? k : 0);
                             int c = info.startCol + (info.vertical ? 0 : k);
                             if (r >= 0 && r < ROWS && c >= 0 && c < COLS) {
-                                cells[r][c].clearShipImage();
-                                cells[r][c].setState(model.CellState.WATER);
-                                cells[r][c].clearShipInfo();
-                                // Reemplazar el handler con uno vacío en lugar de eliminarlo
-                                // Esto evita el NullPointerException cuando Swing llama a exportDone
-                                cells[r][c].setTransferHandler(new TransferHandler("text") {
-                                    @Override
-                                    protected Transferable createTransferable(JComponent c) {
-                                        return new StringSelection("");
-                                    }
-                                    @Override
-                                    public int getSourceActions(JComponent c) {
-                                        return NONE; // No permitir drag
-                                    }
-                                    @Override
-                                    protected void exportDone(JComponent c, Transferable data, int action) {
-                                        // No hacer nada - handler vacío
-                                    }
-                                });
+                                cellsToClear.add(new java.awt.Point(r, c));
                             }
                         }
-                        break;
                     }
                 }
             }
+        }
+        
+        for (java.awt.Point p : cellsToClear) {
+            int r = p.x;
+            int c = p.y;
+            cells[r][c].clearShipImage();
+            cells[r][c].setState(model.CellState.WATER);
+            cells[r][c].clearShipInfo();
+            // Eliminar todos los listeners de mouse para limpiar
+            for (java.awt.event.MouseListener ml : cells[r][c].getMouseListeners()) {
+                cells[r][c].removeMouseListener(ml);
+            }
+        }
+        
+        // Mostrar el label de nuevo en el sidebar cuando se elimina un barco
+        if (gamePanel != null) {
+            gamePanel.showShipLabel(shipType);
         }
     }
 
@@ -555,7 +441,6 @@ public class BoardPanel extends JPanel {
         for (int i = 0; i < ROWS; i++) {
             for (int j = 0; j < COLS; j++) {
                 if (cells[i][j].hasShip() && cells[i][j].getShipType().equals(shipType)) {
-                    // Encontrar todas las celdas del barco y limpiarlas
                     BoardCell.ShipInfo info = cells[i][j].getShipInfo();
                     if (info != null) {
                         for (int k = 0; k < info.size; k++) {
@@ -565,8 +450,6 @@ public class BoardPanel extends JPanel {
                                 cells[r][c].clearShipImage();
                                 cells[r][c].setState(model.CellState.WATER);
                                 cells[r][c].clearShipInfo();
-                                // Reemplazar el handler con uno vacío en lugar de eliminarlo
-                                // Esto evita el NullPointerException cuando Swing llama a exportDone
                                 cells[r][c].setTransferHandler(new TransferHandler("text") {
                                     @Override
                                     protected Transferable createTransferable(JComponent c) {
@@ -574,14 +457,17 @@ public class BoardPanel extends JPanel {
                                     }
                                     @Override
                                     public int getSourceActions(JComponent c) {
-                                        return NONE; // No permitir drag
+                                        return NONE;
                                     }
                                     @Override
                                     protected void exportDone(JComponent c, Transferable data, int action) {
-                                        // No hacer nada - handler vacío
                                     }
                                 });
                             }
+                        }
+                        if (gamePanel != null) {
+                            gamePanel.removeShipFromBattleShip(shipType);
+                            gamePanel.showShipLabel(shipType);
                         }
                         repaint();
                         break;
@@ -592,34 +478,23 @@ public class BoardPanel extends JPanel {
     }
 
     private void makeCellDraggable(BoardCell cell, String shipType, int size) {
-        // Hacer todas las celdas del barco arrastrables
-        // Todas apuntan a la primera celda del barco para obtener la información
-        cell.setTransferHandler(new TransferHandler("text") {
+        // Sistema de drag simulado: agregar MouseListener para iniciar drag desde el tablero
+        // Solo durante la fase de colocación
+        cell.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
-            protected Transferable createTransferable(JComponent c) {
-                BoardCell boardCell = (BoardCell) c;
-                BoardCell.ShipInfo info = boardCell.getShipInfo();
-                if (info != null) {
-                    // Obtener la primera celda del barco para la información completa
-                    int firstRow = info.startRow;
-                    int firstCol = info.startCol;
-                    if (firstRow >= 0 && firstRow < ROWS && firstCol >= 0 && firstCol < COLS) {
-                        return new StringSelection(info.shipType + ":" + info.size);
+            public void mousePressed(java.awt.event.MouseEvent e) {
+                // Solo permitir drag durante la fase de colocación
+                if (gamePanel != null && gamePanel.getBattleShip().isPlacementPhase()) {
+                    // Obtener el tipo y tamaño del barco desde la celda
+                    BoardCell.ShipInfo info = cell.getShipInfo();
+                    if (info != null) {
+                        // Iniciar drag simulado con el barco que está en esta celda
+                        startSimulatedDrag(info.shipType, info.size);
+                    } else {
+                        // Fallback si no hay info
+                        startSimulatedDrag(shipType, size);
                     }
                 }
-                return new StringSelection(shipType + ":" + size);
-            }
-
-            @Override
-            public int getSourceActions(JComponent c) {
-                return COPY;
-            }
-
-            @Override
-            protected void exportDone(JComponent c, Transferable data, int action) {
-                // Sobrescribir para evitar NullPointerException si el handler fue eliminado
-                // durante el drag. No hacer nada aquí ya que la limpieza se hace después.
-                super.exportDone(c, data, action);
             }
         });
     }
@@ -632,14 +507,71 @@ public class BoardPanel extends JPanel {
             return Math.min(width / COLS, height / ROWS);
         }
         
-        // Si el panel aún no tiene tamaño, usar el tamaño preferido
         Dimension prefSize = getPreferredSize();
         if (prefSize != null && prefSize.width > 0) {
             return Math.min(prefSize.width / COLS, prefSize.height / ROWS);
         }
         
-        // Fallback
         return 420 / 8;
+    }
+
+    public CellState[][] getBoardState() {
+        CellState[][] board = new CellState[ROWS][COLS];
+        for (int i = 0; i < ROWS; i++) {
+            for (int j = 0; j < COLS; j++) {
+                board[i][j] = cells[i][j].getState();
+            }
+        }
+        return board;
+    }
+
+    public void clearBoard() {
+        for (int i = 0; i < ROWS; i++) {
+            for (int j = 0; j < COLS; j++) {
+                cells[i][j].clearShipImage();
+                cells[i][j].clearShipInfo();
+                cells[i][j].setState(model.CellState.WATER);
+                cells[i][j].setTransferHandler(null);
+            }
+        }
+        repaint();
+    }
+
+    public void loadBoardFromPlayer(CellState[][] board) {
+        clearBoard();
+        
+        if (board != null) {
+            for (int i = 0; i < ROWS && i < board.length; i++) {
+                for (int j = 0; j < COLS && j < board[i].length; j++) {
+                cells[i][j].setState(board[i][j]);
+            }
+        }
+    }
+        repaint();
+    }
+    
+
+    private Image rotateImage90(java.awt.image.BufferedImage image, int size) {
+        if (image == null) {
+            System.out.println("ERROR: rotateImage90 recibió imagen null");
+            return null;
+        }
+        
+        java.awt.image.BufferedImage buffered = new java.awt.image.BufferedImage(
+            size, size, java.awt.image.BufferedImage.TYPE_INT_ARGB
+        );
+        java.awt.Graphics2D g2d = buffered.createGraphics();
+        g2d.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, 
+                             java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        g2d.setRenderingHint(java.awt.RenderingHints.KEY_RENDERING, 
+                             java.awt.RenderingHints.VALUE_RENDER_QUALITY);
+        g2d.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING,
+                             java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+        g2d.translate(0, size);
+        g2d.rotate(-Math.PI / 2);
+        g2d.drawImage(image, 0, 0, size, size, null);
+        g2d.dispose();
+        return buffered;
     }
     
 }

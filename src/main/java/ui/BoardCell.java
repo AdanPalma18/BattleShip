@@ -14,8 +14,9 @@ public class BoardCell extends JPanel {
     private CellState state;
     private boolean isPreview;
     private Image shipImage;
-    private String shipPart; // Parte del barco (ej: "PA_1", "PA_2", etc.)
-    private ShipInfo shipInfo; // Información completa del barco
+    private String shipPart;
+    private ShipInfo shipInfo;
+    private boolean isTutorialMode = false;
 
     private BoardCellListener listener;
 
@@ -71,6 +72,10 @@ public class BoardCell extends JPanel {
         updateColor();
     }
 
+    public CellState getState() {
+        return state;
+    }
+
     private void updateColor() {
         if (isPreview) {
             setBackground(new Color(100, 200, 100, 150));
@@ -81,8 +86,19 @@ public class BoardCell extends JPanel {
             case HIT -> setBackground(Color.RED);
             case MISS -> setBackground(Color.LIGHT_GRAY);
             case SUNK -> setBackground(Color.DARK_GRAY);
-            case SHIP -> setBackground(Color.GRAY);
+            case SHIP -> {
+                if (isTutorialMode) {
+                    setBackground(Color.GRAY);
+                } else {
+                    setBackground(new Color(180,220,255));
+                }
+            }
         }
+    }
+
+    public void setTutorialMode(boolean tutorialMode) {
+        this.isTutorialMode = tutorialMode;
+        updateColor();
     }
 
     @Override

@@ -2,8 +2,7 @@ package ui;
 
 import javax.swing.*;
 import java.awt.*;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
+import java.awt.event.*;
 import java.net.URL;
 
 import logic.BattleShip;
@@ -17,16 +16,32 @@ public class GamePanel extends JPanel {
     private final BoardPanel boardPanel;
     private final JLabel turnLabel;
     private final java.util.Map<String, JLabel> shipLabels = new java.util.HashMap<>();
+    private final MainFrame mainFrame;
+    private AWTEventListener globalMouseListener;
+    private JButton btnContinue;
 
     public GamePanel(MainFrame frame, BattleShip battleShip) {
+        this.mainFrame = frame;
         this.battleShip = battleShip;
         setLayout(new BorderLayout());
 
         turnLabel = new JLabel("Turno de: -");
         turnLabel.setFont(new Font("Arial", Font.BOLD, 16));
 
-        JPanel topPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        topPanel.add(turnLabel);
+        JPanel topPanel = new JPanel(new BorderLayout());
+        topPanel.add(turnLabel, BorderLayout.WEST);
+        
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        btnContinue = new JButton("Continuar");
+        JButton btnSurrender = new JButton("Rendirse");
+        
+        btnContinue.addActionListener(e -> handleContinue());
+        btnSurrender.addActionListener(e -> handleSurrender());
+        
+        buttonPanel.add(btnContinue);
+        buttonPanel.add(btnSurrender);
+        topPanel.add(buttonPanel, BorderLayout.EAST);
+        
         add(topPanel, BorderLayout.NORTH);
 
         boardPanel = new BoardPanel(this);
@@ -46,28 +61,309 @@ public class GamePanel extends JPanel {
         add(splitPane, BorderLayout.CENTER);
 
         boardPanel.setCellListener(this::handleCellClick);
+        
+        // Registrar listener global de mouse para capturar drag desde cualquier lugar
+        setupGlobalMouseListener();
+    }
+    
+    private void setupGlobalMouseListener() {
+        globalMouseListener = new AWTEventListener() {
+            @Override
+            public void eventDispatched(AWTEvent event) {
+                // Solo procesar eventos de drag durante la fase de colocación
+                if (event instanceof MouseEvent && battleShip.isPlacementPhase() && boardPanel.isDragging()) {
+                    MouseEvent me = (MouseEvent) event;
+                    
+                    // Convertir coordenadas de pantalla a coordenadas del BoardPanel
+                    Point screenPoint = me.getLocationOnScreen();
+                    Point panelPoint = new Point(screenPoint);
+                    SwingUtilities.convertPointFromScreen(panelPoint, boardPanel);
+                    
+                    if (me.getID() == MouseEvent.MOUSE_DRAGGED) {
+                        // Verificar si el punto está dentro del BoardPanel
+                        if (boardPanel.contains(panelPoint)) {
+                            boardPanel.handleDragEvent(panelPoint.x, panelPoint.y);
+                        } else {
+                            // Si está fuera, limpiar preview pero mantener el drag activo
+                            // NO limpiar isDragging ni currentDragSize para que R funcione
+                            boardPanel.clearPreview();
+                        }
+                    } else if (me.getID() == MouseEvent.MOUSE_RELEASED) {
+                        if (boardPanel.isDragging()) {
+                            if (boardPanel.contains(panelPoint)) {
+                                boardPanel.handleDropEvent(panelPoint.x, panelPoint.y);
+                            } else {
+                                // Si se suelta fuera del panel, cancelar el drag
+                                boardPanel.cancelDrag();
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        
+        Toolkit.getDefaultToolkit().addAWTEventListener(
+            globalMouseListener, 
+            AWTEvent.MOUSE_EVENT_MASK | AWTEvent.MOUSE_MOTION_EVENT_MASK
+        );
+    }
+    
+    public void cleanup() {
+        if (globalMouseListener != null) {
+            Toolkit.getDefaultToolkit().removeAWTEventListener(globalMouseListener);
+        }
+    }
+    
+    public BoardPanel getBoardPanel() {
+        return boardPanel;
+    }
+    
+    public BattleShip getBattleShip() {
+        return battleShip;
     }
 
     private void handleCellClick(int row, int col) {
-        if (!battleShip.isMyTurn()) return;
+        if (battleShip.isPlacementPhase()) {
+            return;
+        }
+
+        // Verificar si la casilla ya fue disparada antes de intentar disparar
+        CellState[][] currentEnemyBoard = battleShip.getEnemyBoard();
+        if (currentEnemyBoard != null && row >= 0 && row < currentEnemyBoard.length && 
+            col >= 0 && col < currentEnemyBoard[row].length) {
+            CellState currentState = currentEnemyBoard[row][col];
+            // Si la casilla no es WATER ni SHIP, ya fue disparada
+            if (currentState != CellState.WATER && currentState != CellState.SHIP) {
+                JOptionPane.showMessageDialog(
+                    this,
+                    "Ya has disparado en esta casilla.",
+                    "Casilla ya disparada",
+                    JOptionPane.WARNING_MESSAGE
+                );
+                return;
+            }
+        }
 
         CellState result = battleShip.shoot(row, col);
+        if (result == null) return;
+
+        String message;
+        String title;
+        int messageType;
+        boolean shouldChangeTurn = false;
+        
+        if (result == CellState.HIT) {
+            message = "¡Impacto! Has acertado en (" + row + ", " + col + ")\n¡Sigue tu turno!";
+            title = "¡Impacto!";
+            messageType = JOptionPane.INFORMATION_MESSAGE;
+            shouldChangeTurn = false;
+
+        } else if (result == CellState.MISS) {
+            message = "Agua. Has fallado en (" + row + ", " + col + ")\nSigue el turno de " + battleShip.getNextTurnUsername();
+            title = "Agua";
+            messageType = JOptionPane.INFORMATION_MESSAGE;
+            shouldChangeTurn = true;
+        } else if (result == CellState.SUNK) {
+            message = "Barco Hundido, haz hundido el barco completo.";
+            title = "Barco Hundido!";
+            messageType = JOptionPane.INFORMATION_MESSAGE;
+            shouldChangeTurn = false;
+        } else {
+            message = "Ya has disparado en esta casilla.";
+            title = "Casilla ya disparada";
+            messageType = JOptionPane.WARNING_MESSAGE;
+            shouldChangeTurn = false;
+        }
+
+        
+        JOptionPane.showMessageDialog(this, message, title, messageType);
 
         CellState[][] enemyBoard = battleShip.getEnemyBoard();
         if (enemyBoard != null) {
             boardPanel.updateBoard(enemyBoard);
         }
 
+        if (shouldChangeTurn) {
         battleShip.nextTurn();
-        updateTurnLabel();
+            
+            SwingUtilities.invokeLater(() -> {
+                CellState[][] newEnemyBoard = battleShip.getEnemyBoard();
+                System.out.println("DEBUG: Después de nextTurn, currentTurn=" + battleShip.getCurrentTurnUsername());
+                System.out.println("DEBUG: newEnemyBoard=" + (newEnemyBoard != null ? "no null" : "null"));
+                if (newEnemyBoard != null) {
+                    boardPanel.updateBoard(newEnemyBoard);
+                }
+                updateTurnLabel();
+            });
+        } else {
+            updateTurnLabel();
+        }
+    }
+
+    private void handleContinue() {
+        if (battleShip.isPlacementPhase()) {
+            if (areAllShipsPlacedOnBoard()) {
+                boolean wasPlacementPhase = battleShip.isPlacementPhase();
+                boolean bothReadyBefore = battleShip.areBothPlayersReady();
+                
+                battleShip.continueToNextTurn();
+                
+                boolean isPlacementPhaseNow = battleShip.isPlacementPhase();
+                boolean bothReadyAfter = battleShip.areBothPlayersReady();
+                
+                System.out.println("DEBUG: wasPlacementPhase=" + wasPlacementPhase + ", isPlacementPhaseNow=" + isPlacementPhaseNow);
+                System.out.println("DEBUG: bothReadyBefore=" + bothReadyBefore + ", bothReadyAfter=" + bothReadyAfter);
+                
+                if (!isPlacementPhaseNow) {
+                    System.out.println("DEBUG: Iniciando batalla");
+                    JOptionPane.showMessageDialog(
+                        this,
+                        "¡Comienza la batalla! Es el turno de " + battleShip.getCurrentTurnUsername(),
+                        "Fase de batalla iniciada",
+                        JOptionPane.INFORMATION_MESSAGE
+                    );
+                    switchToBattlePhase();
+                } else {
+                    System.out.println("DEBUG: Cambiando al siguiente jugador");
+                    switchToNextPlayer();
+                }
+                updateTurnLabel();
+                updatePlacementStatus();
+            } else {
+                JOptionPane.showMessageDialog(
+                    this,
+                    "Debes colocar todos los barcos antes de continuar.",
+                    "Barcos faltantes",
+                    JOptionPane.WARNING_MESSAGE
+                );
+            }
+        } else {
+            battleShip.continueToNextTurn();
+            updateTurnLabel();
+        }
+    }
+
+    private void switchToBattlePhase() {
+        boardPanel.clearBoard();
+        hideShipLabel("PA");
+        hideShipLabel("AZ");
+        hideShipLabel("SM");
+        hideShipLabel("DT");
+        
+        // Deshabilitar el botón Continuar durante la batalla
+        if (btnContinue != null) {
+            btnContinue.setEnabled(false);
+        }
+        
+        boolean isTutorial = battleShip.getMode() != null && battleShip.getMode() == model.Mode.TUTORIAL;
+        boardPanel.setTutorialMode(isTutorial);
+        
+        CellState[][] enemyBoard = battleShip.getEnemyBoard();
+        if (enemyBoard != null) {
+            boardPanel.updateBoard(enemyBoard);
+        }
+    }
+
+    public void saveBoardStateToPlayer() {
+        // Ya no es necesario - los barcos se guardan directamente en el board con addShip()
+    }
+
+    public void saveShipToBattleShip(String shipCode, int size, int row, int col, boolean vertical) {
+        battleShip.removeShip(shipCode);
+        battleShip.addShip(shipCode, size, row, col, vertical);
+    }
+
+    public void removeShipFromBattleShip(String shipCode) {
+        battleShip.removeShip(shipCode);
+    }
+
+    private void switchToNextPlayer() {
+        boardPanel.clearBoard();
+        
+        if (battleShip.isPlacementPhase()) {
+            showShipLabel("PA");
+            showShipLabel("AZ");
+            showShipLabel("SM");
+            showShipLabel("DT");
+        }
+    }
+
+    private boolean areAllShipsPlacedOnBoard() {
+        return battleShip.areAllShipsPlaced();
+    }
+
+    private void handleSurrender() {
+        int option = JOptionPane.showConfirmDialog(
+            this,
+            "¿Estás seguro de que quieres rendirte?",
+            "Rendirse",
+            JOptionPane.YES_NO_OPTION
+        );
+        if (option == JOptionPane.YES_OPTION) {
+            model.Player winner = battleShip.surrender();
+            String winnerName = winner != null ? winner.getUsername() : "Oponente";
+            JOptionPane.showMessageDialog(
+                this,
+                "¡" + winnerName + " ha ganado la partida!",
+                "Juego terminado",
+                JOptionPane.INFORMATION_MESSAGE
+            );
+            battleShip.resetGame();
+            clearGamePanel();
+            mainFrame.showMenu();
+        }
+    }
+
+    private void clearGamePanel() {
+        boardPanel.clearBoard();
+        hideShipLabel("PA");
+        hideShipLabel("AZ");
+        hideShipLabel("SM");
+        hideShipLabel("DT");
+        turnLabel.setText("Turno de: -");
+        // Habilitar el botón Continuar cuando se limpia el panel (nuevo juego)
+        if (btnContinue != null) {
+            btnContinue.setEnabled(true);
+        }
+    }
+
+    private void updatePlacementStatus() {
+        if (battleShip.getCurrentUser() == null || battleShip.getCurrentTurnUsername() == null || battleShip.getCurrentTurnUsername().isBlank()) {
+            turnLabel.setText("Turno de: -");
+            return;
+        }
+        if (battleShip.isPlacementPhase()) {
+            turnLabel.setText("Coloca tus barcos - " + battleShip.getCurrentTurnUsername());
+        } else {
+            updateTurnLabel();
+        }
     }
 
     public void startGame() {
-        CellState[][] enemyBoard = battleShip.getEnemyBoard();
-        if (enemyBoard != null) {
-            boardPanel.updateBoard(enemyBoard);
+        boolean isTutorial = battleShip.getMode() != null && battleShip.getMode() == model.Mode.TUTORIAL;
+        boardPanel.setTutorialMode(isTutorial);
+        
+        if (battleShip.isPlacementPhase()) {
+            boardPanel.clearBoard();
+            showShipLabel("PA");
+            showShipLabel("AZ");
+            showShipLabel("SM");
+            showShipLabel("DT");
+            // Habilitar el botón Continuar durante la fase de colocación
+            if (btnContinue != null) {
+                btnContinue.setEnabled(true);
+            }
+        } else {
+            // Deshabilitar el botón Continuar durante la batalla
+            if (btnContinue != null) {
+                btnContinue.setEnabled(false);
+            }
+            CellState[][] enemyBoard = battleShip.getEnemyBoard();
+            if (enemyBoard != null) {
+                boardPanel.updateBoard(enemyBoard);
+            }
         }
-        updateTurnLabel();
+        updatePlacementStatus();
     }
 
     private void updateTurnLabel() {
@@ -85,7 +381,6 @@ public class GamePanel extends JPanel {
         panel.setBackground(new Color(245, 245, 245));
         panel.setPreferredSize(new Dimension(220, BOARD_SIZE));
         
-        // Hacer el panel aceptar drops para devolver barcos
         panel.setDropTarget(new java.awt.dnd.DropTarget(panel, java.awt.dnd.DnDConstants.ACTION_COPY, 
             new java.awt.dnd.DropTargetAdapter() {
                 @Override
@@ -93,7 +388,6 @@ public class GamePanel extends JPanel {
                     try {
                         dtde.acceptDrop(java.awt.dnd.DnDConstants.ACTION_COPY);
                         
-                        // Buscar cualquier DataFlavor que represente String
                         java.awt.datatransfer.DataFlavor stringFlavor = null;
                         for (java.awt.datatransfer.DataFlavor flavor : dtde.getCurrentDataFlavors()) {
                             if (flavor.isFlavorTextType() || 
@@ -110,14 +404,10 @@ public class GamePanel extends JPanel {
                             if (parts.length >= 2) {
                                 String shipType = parts[0];
                                 
-                                // Marcar que el drop se completó primero
                                 dtde.dropComplete(true);
                                 
-                                // Usar invokeLater para diferir la limpieza hasta que el drag termine
                                 javax.swing.SwingUtilities.invokeLater(() -> {
-                                    // Mostrar el label del sidebar de nuevo
                                     showShipLabel(shipType);
-                                    // Quitar el barco del tablero (pero reemplazar handlers en lugar de eliminarlos)
                                     boardPanel.removeShipFromBoardSafely(shipType);
                                 });
                                 return;
@@ -164,7 +454,6 @@ public class GamePanel extends JPanel {
         label.setIconTextGap(8);
 
         label.setText(shipCode + ":" + shipSize);
-        label.setTransferHandler(new TransferHandler("text"));
 
         URL resource = getClass().getResource(resourcePath);
         if (resource == null) return label;
@@ -172,9 +461,7 @@ public class GamePanel extends JPanel {
         Image original = new ImageIcon(resource).getImage();
 
         final ImageIcon[] sidebarIcon = { null };
-        final ImageIcon[] dragIcon = { null };
 
-        // ===== ESCALADO NORMAL (sidebar) =====
         label.addComponentListener(new java.awt.event.ComponentAdapter() {
             @Override
             public void componentResized(java.awt.event.ComponentEvent e) {
@@ -198,66 +485,23 @@ public class GamePanel extends JPanel {
             }
         });
 
-        // ===== DRAG CON TAMAÑO REAL =====
+        // Sistema de drag simulado
         label.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
             public void mousePressed(java.awt.event.MouseEvent e) {
-                int cellSize = boardPanel.getCellSize();
-                
-                // Si el panel aún no tiene tamaño, usar el tamaño preferido
-                if (cellSize <= 0) {
-                    Dimension prefSize = boardPanel.getPreferredSize();
-                    if (prefSize != null && prefSize.width > 0) {
-                        cellSize = Math.min(prefSize.width / 8, prefSize.height / 8);
-                    } else {
-                        cellSize = 420 / 8; // Fallback
-                    }
+                // Solo permitir drag durante la fase de colocación
+                if (battleShip.isPlacementPhase()) {
+                    // Iniciar drag simulado
+                    boardPanel.startSimulatedDrag(shipCode, shipSize);
                 }
-
-                int targetWidth = cellSize;
-                int targetHeight = shipSize * cellSize;
-
-                double scaleHeight = (double) targetHeight / original.getHeight(null);
-                double scaleWidth = (double) targetWidth / original.getWidth(null);
-                
-                double scale = scaleHeight * 1.6;
-                
-                int resultingWidth = (int) (original.getWidth(null) * scale);
-                if (resultingWidth > targetWidth * 2.0) {
-                    scale = Math.min(scaleHeight * 1.1, scaleWidth * 1.3);
-                }
-
-                // Calcular dimensiones directamente
-                int originalWidth = original.getWidth(null);
-                int originalHeight = original.getHeight(null);
-                
-                if (originalWidth <= 0 || originalHeight <= 0) {
-                    // Si la imagen original no está lista, usar valores por defecto
-                    originalWidth = 100;
-                    originalHeight = 100;
-                }
-                
-                int scaledWidth = Math.max(1, (int) (originalWidth * scale));
-                int scaledHeight = Math.max(1, (int) (originalHeight * scale));
-
-                Image scaledDrag = original.getScaledInstance(
-                        scaledWidth,
-                        scaledHeight,
-                        Image.SCALE_SMOOTH
-                );
-
-                dragIcon[0] = new ImageIcon(scaledDrag);
-
-                TransferHandler handler = label.getTransferHandler();
-                handler.setDragImage(dragIcon[0].getImage());
-                handler.setDragImageOffset(
-                        new Point(
-                                Math.min(20, dragIcon[0].getIconWidth() / 4),
-                                Math.min(20, dragIcon[0].getIconHeight() / 4)
-                        )
-                );
-
-                handler.exportAsDrag(label, e, TransferHandler.COPY);
+            }
+        });
+        
+        label.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
+            @Override
+            public void mouseDragged(java.awt.event.MouseEvent e) {
+                // El drag se maneja en BoardPanel con sus propios listeners
+                // Solo necesitamos iniciar el drag cuando se presiona
             }
         });
 
