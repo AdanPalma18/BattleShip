@@ -12,9 +12,16 @@ public class MainFrame extends JFrame {
     public static final String LOGIN = "LOGIN";
     public static final String MENU = "MENU";
     public static final String GAME = "GAME";
+    public static final String REPORTS = "REPORTS";
+    public static final String CONFIG = "CONFIG";
+    public static final String PROFILE = "PROFILE";
     CardLayout cardLayout;
     JPanel mainPanel;
     private GamePanel gamePanel;
+    private ReportsPanel reportsPanel;
+    private ConfigPanel configPanel;
+    private ProfilePanel profilePanel;
+    private LoginPanel loginPanel;
     private BattleShip game;
     private java.awt.KeyEventDispatcher keyDispatcher;
     
@@ -27,10 +34,17 @@ public class MainFrame extends JFrame {
         cardLayout = new CardLayout();
         mainPanel = new JPanel(cardLayout);
         gamePanel = new GamePanel(this, game);
+        loginPanel = new LoginPanel(this, game);
 
-        mainPanel.add(new LoginPanel(this, game), LOGIN);
+        mainPanel.add(loginPanel, LOGIN);
         mainPanel.add(new MenuPanel(this, game), MENU);
         mainPanel.add(gamePanel, GAME);
+        reportsPanel = new ReportsPanel(this, game);
+        mainPanel.add(reportsPanel, REPORTS);
+        configPanel = new ConfigPanel(this, game);
+        mainPanel.add(configPanel, CONFIG);
+        profilePanel = new ProfilePanel(this, game);
+        mainPanel.add(profilePanel, PROFILE);
 
         add(mainPanel);
         
@@ -103,6 +117,7 @@ public class MainFrame extends JFrame {
 
 
     public void showLogin() {
+        loginPanel.clearFields(); // Limpiar campos al mostrar el login
         cardLayout.show(mainPanel, LOGIN);
     }
 
@@ -111,10 +126,21 @@ public class MainFrame extends JFrame {
     }
 
     public void showGame(String enemyUsername) {
-        game.startMatch(enemyUsername);
+        // La validación ya se hizo en MenuPanel, solo mostrar el juego
         gamePanel.startGame();
         cardLayout.show(mainPanel, GAME);
     }
 
+    public void showReports() {
+        cardLayout.show(mainPanel, REPORTS);
+    }
+
+    public void showConfig() {
+        cardLayout.show(mainPanel, CONFIG);
+    }
+
+    public void showProfile() {
+        cardLayout.show(mainPanel, PROFILE);
+    }
 
 }

@@ -6,7 +6,9 @@ import java.awt.event.*;
 import java.net.URL;
 
 import logic.BattleShip;
+import model.Ship;
 import model.CellState;
+import model.Player;
 
 public class GamePanel extends JPanel {
 
@@ -15,10 +17,12 @@ public class GamePanel extends JPanel {
     private final BattleShip battleShip;
     private final BoardPanel boardPanel;
     private final JLabel turnLabel;
+    private final JLabel placementInfoLabel;
     private final java.util.Map<String, JLabel> shipLabels = new java.util.HashMap<>();
     private final MainFrame mainFrame;
     private AWTEventListener globalMouseListener;
     private JButton btnContinue;
+    private JButton btnExit;
 
     public GamePanel(MainFrame frame, BattleShip battleShip) {
         this.mainFrame = frame;
@@ -27,19 +31,32 @@ public class GamePanel extends JPanel {
 
         turnLabel = new JLabel("Turno de: -");
         turnLabel.setFont(new Font("Arial", Font.BOLD, 16));
+        
+        placementInfoLabel = new JLabel("");
+        placementInfoLabel.setFont(new Font("Arial", Font.BOLD, 14));
+        placementInfoLabel.setForeground(new Color(0, 100, 180));
+        placementInfoLabel.setHorizontalAlignment(SwingConstants.CENTER);
 
         JPanel topPanel = new JPanel(new BorderLayout());
-        topPanel.add(turnLabel, BorderLayout.WEST);
+        
+        JPanel labelPanel = new JPanel(new GridLayout(2, 1));
+        labelPanel.add(turnLabel);
+        labelPanel.add(placementInfoLabel);
+        
+        topPanel.add(labelPanel, BorderLayout.WEST);
         
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         btnContinue = new JButton("Continuar");
         JButton btnSurrender = new JButton("Rendirse");
+        btnExit = new JButton("Salir");
         
         btnContinue.addActionListener(e -> handleContinue());
         btnSurrender.addActionListener(e -> handleSurrender());
+        btnExit.addActionListener(e -> handleExit());
         
         buttonPanel.add(btnContinue);
         buttonPanel.add(btnSurrender);
+        buttonPanel.add(btnExit);
         topPanel.add(buttonPanel, BorderLayout.EAST);
         
         add(topPanel, BorderLayout.NORTH);
@@ -93,7 +110,16 @@ public class GamePanel extends JPanel {
                             if (boardPanel.contains(panelPoint)) {
                                 boardPanel.handleDropEvent(panelPoint.x, panelPoint.y);
                             } else {
-                                // Si se suelta fuera del panel, cancelar el drag
+                                // Si se suelta fuera del panel, verificar si viene del tablero
+                                if (boardPanel.isDragFromBoard()) {
+                                    String shipType = boardPanel.getCurrentDragShipType();
+                                    if (shipType != null) {
+                                        // Devolver el barco al sidebar
+                                        showShipLabel(shipType);
+                                        boardPanel.removeShipFromBoardSafely(shipType);
+                                    }
+                                }
+                                // Cancelar el drag
                                 boardPanel.cancelDrag();
                             }
                         }
@@ -153,7 +179,19 @@ public class GamePanel extends JPanel {
         boolean shouldChangeTurn = false;
         
         if (result == CellState.HIT) {
-            message = "¡Impacto! Has acertado en (" + row + ", " + col + ")\n¡Sigue tu turno!";
+            // Obtener el barco golpeado para mostrar su nombre
+            Ship hitShip = battleShip.getLastHitShip();
+            String shipName = hitShip != null ? logic.BattleShip.getShipName(hitShip.getCode()) : "";
+            
+            // Verificar si el tablero se regeneró o si fue un disparo a una parte ya golpeada
+            if (battleShip.wasLastShotRegenerated()) {
+                message = "¡SE HA BOMBARDEADO UN " + shipName + "!\n" +
+                          "El tablero enemigo se ha regenerado.\n" +
+                          "¡Sigue tu turno!";
+            } else {
+                message = "Esta parte del " + shipName + " ya ha sido disparada anteriormente.\n" +
+                          "El tablero no se regenera porque no fue un impacto nuevo.";
+            }
             title = "¡Impacto!";
             messageType = JOptionPane.INFORMATION_MESSAGE;
             shouldChangeTurn = false;
@@ -164,10 +202,50 @@ public class GamePanel extends JPanel {
             messageType = JOptionPane.INFORMATION_MESSAGE;
             shouldChangeTurn = true;
         } else if (result == CellState.SUNK) {
-            message = "Barco Hundido, haz hundido el barco completo.";
-            title = "Barco Hundido!";
-            messageType = JOptionPane.INFORMATION_MESSAGE;
-            shouldChangeTurn = false;
+            // Verificar si el juego terminó (todos los barcos hundidos)
+            if (battleShip.getWinner() != null) {
+                // El juego terminó - el jugador actual ganó
+                Player winner = battleShip.getWinner();
+                Player loser = battleShip.getEnemyPlayerPublic();
+                
+                // Actualizar puntos (ganador recibe 3 puntos según las especificaciones)
+                winner.addPoints(3);
+                
+                // Crear resultado del juego usando la dificultad, no el modo
+                String difficultyStr = battleShip.getDifficulty() != null ? battleShip.getDifficulty().toString() : "NORMAL";
+                String gameResult = model.GameLog.win(winner.getUsername(), loser.getUsername(), difficultyStr);
+                winner.addGameToHistory(gameResult);
+                loser.addGameToHistory(gameResult);
+                
+                message = "¡" + winner.getUsername() + " ha ganado!\n" +
+                          "Has hundido todos los barcos enemigos.\n" +
+                          "Puntos obtenidos: 3";
+                title = "¡Victoria!";
+                messageType = JOptionPane.INFORMATION_MESSAGE;
+                shouldChangeTurn = false;
+                
+                // Mostrar mensaje de victoria
+                JOptionPane.showMessageDialog(this, message, title, messageType);
+                
+                // Resetear el juego y volver al menú
+                battleShip.resetGame();
+                clearGamePanel();
+                mainFrame.showMenu();
+                return; // Salir temprano, no continuar con el flujo normal
+            } else {
+                // Solo un barco hundido, el juego continúa
+                // Obtener el barco hundido para mostrar su nombre
+                Ship sunkShip = battleShip.getLastHitShip();
+                String shipName = sunkShip != null ? logic.BattleShip.getShipName(sunkShip.getCode()) : "BARCO";
+                Player enemy = battleShip.getEnemyPlayerPublic();
+                String enemyName = enemy != null ? enemy.getUsername() : "Jugador";
+                
+                message = "¡SE HUNDIO EL " + shipName + "!\n" +
+                          "Del " + enemyName;
+                title = "Barco Hundido!";
+                messageType = JOptionPane.INFORMATION_MESSAGE;
+                shouldChangeTurn = false;
+            }
         } else {
             message = "Ya has disparado en esta casilla.";
             title = "Casilla ya disparada";
@@ -178,13 +256,16 @@ public class GamePanel extends JPanel {
         
         JOptionPane.showMessageDialog(this, message, title, messageType);
 
-        CellState[][] enemyBoard = battleShip.getEnemyBoard();
-        if (enemyBoard != null) {
-            boardPanel.updateBoard(enemyBoard);
-        }
+        // Actualizar el tablero después del disparo (después de regeneración si fue HIT)
+        SwingUtilities.invokeLater(() -> {
+            CellState[][] enemyBoard = battleShip.getEnemyBoard();
+            if (enemyBoard != null) {
+                boardPanel.updateBoard(enemyBoard);
+            }
+        });
 
         if (shouldChangeTurn) {
-        battleShip.nextTurn();
+            battleShip.nextTurn();
             
             SwingUtilities.invokeLater(() -> {
                 CellState[][] newEnemyBoard = battleShip.getEnemyBoard();
@@ -255,6 +336,11 @@ public class GamePanel extends JPanel {
             btnContinue.setEnabled(false);
         }
         
+        // Deshabilitar el botón Salir durante la batalla
+        if (btnExit != null) {
+            btnExit.setEnabled(false);
+        }
+        
         boolean isTutorial = battleShip.getMode() != null && battleShip.getMode() == model.Mode.TUTORIAL;
         boardPanel.setTutorialMode(isTutorial);
         
@@ -269,7 +355,32 @@ public class GamePanel extends JPanel {
     }
 
     public void saveShipToBattleShip(String shipCode, int size, int row, int col, boolean vertical) {
-        battleShip.removeShip(shipCode);
+        // Método legacy: siempre remueve primero (mover barco)
+        saveShipToBattleShip(shipCode, size, row, col, vertical, false);
+    }
+    
+    /**
+     * Guarda un barco en BattleShip, con opción de crear duplicado (no remover el anterior)
+     * @param shipCode Código del barco
+     * @param size Tamaño del barco
+     * @param row Fila
+     * @param col Columna
+     * @param vertical Si es vertical
+     * @param createDuplicate Si es true, NO remueve el barco anterior (crea duplicado). Si es false, remueve el anterior (mueve).
+     */
+    public void saveShipToBattleShip(String shipCode, int size, int row, int col, boolean vertical, boolean createDuplicate) {
+        if (!createDuplicate) {
+            // Remover el barco anterior (mover)
+            battleShip.removeShip(shipCode);
+        }
+        // Agregar el nuevo barco
+        battleShip.addShip(shipCode, size, row, col, vertical);
+    }
+    
+    /**
+     * Agrega un barco a BattleShip sin remover ninguno (para movimientos donde ya se removió)
+     */
+    public void addShipToBattleShip(String shipCode, int size, int row, int col, boolean vertical) {
         battleShip.addShip(shipCode, size, row, col, vertical);
     }
 
@@ -301,13 +412,52 @@ public class GamePanel extends JPanel {
         );
         if (option == JOptionPane.YES_OPTION) {
             model.Player winner = battleShip.surrender();
-            String winnerName = winner != null ? winner.getUsername() : "Oponente";
+            if (winner != null) {
+                String winnerName = winner.getUsername();
+                String message = "¡" + winnerName + " ha ganado la partida!\n" +
+                               "Puntos obtenidos: 3\n" +
+                               "El historial ha sido guardado.";
+                JOptionPane.showMessageDialog(
+                    this,
+                    message,
+                    "Juego terminado",
+                    JOptionPane.INFORMATION_MESSAGE
+                );
+            } else {
+                JOptionPane.showMessageDialog(
+                    this,
+                    "Error al procesar la rendición. Por favor, inténtalo de nuevo.",
+                    "Error",
+                    JOptionPane.ERROR_MESSAGE
+                );
+            }
+            battleShip.resetGame();
+            clearGamePanel();
+            mainFrame.showMenu();
+        }
+    }
+    
+    private void handleExit() {
+        // Solo permitir salir durante la fase de colocación
+        if (!battleShip.isPlacementPhase()) {
             JOptionPane.showMessageDialog(
                 this,
-                "¡" + winnerName + " ha ganado la partida!",
-                "Juego terminado",
-                JOptionPane.INFORMATION_MESSAGE
+                "No puedes salir durante la batalla. Usa 'Rendirse' si quieres terminar la partida.",
+                "No permitido",
+                JOptionPane.WARNING_MESSAGE
             );
+            return;
+        }
+        
+        int option = JOptionPane.showConfirmDialog(
+            this,
+            "¿Estás seguro de que quieres salir? Se perderá el progreso de la partida actual.",
+            "Salir del juego",
+            JOptionPane.YES_NO_OPTION,
+            JOptionPane.WARNING_MESSAGE
+        );
+        
+        if (option == JOptionPane.YES_OPTION) {
             battleShip.resetGame();
             clearGamePanel();
             mainFrame.showMenu();
@@ -321,21 +471,43 @@ public class GamePanel extends JPanel {
         hideShipLabel("SM");
         hideShipLabel("DT");
         turnLabel.setText("Turno de: -");
+        placementInfoLabel.setText(""); // Limpiar el label de información
         // Habilitar el botón Continuar cuando se limpia el panel (nuevo juego)
         if (btnContinue != null) {
             btnContinue.setEnabled(true);
+        }
+        // Habilitar el botón Salir cuando se limpia el panel (nuevo juego)
+        if (btnExit != null) {
+            btnExit.setEnabled(true);
         }
     }
 
     private void updatePlacementStatus() {
         if (battleShip.getCurrentUser() == null || battleShip.getCurrentTurnUsername() == null || battleShip.getCurrentTurnUsername().isBlank()) {
             turnLabel.setText("Turno de: -");
+            placementInfoLabel.setText("");
             return;
         }
         if (battleShip.isPlacementPhase()) {
             turnLabel.setText("Coloca tus barcos - " + battleShip.getCurrentTurnUsername());
+            updatePlacementInfoLabel();
         } else {
             updateTurnLabel();
+            placementInfoLabel.setText(""); // Ocultar durante la batalla
+        }
+    }
+    
+    private void updatePlacementInfoLabel() {
+        if (battleShip.isPlacementPhase()) {
+            model.Mode mode = battleShip.getMode();
+            model.Difficulty difficulty = battleShip.getDifficulty();
+            
+            String modeName = mode != null ? mode.name() : "TUTORIAL";
+            int shipsRequired = difficulty != null ? difficulty.getShipsAllowed() : 4;
+            
+            placementInfoLabel.setText("MODO " + modeName + ", COLOCA " + shipsRequired + " BARCOS");
+        } else {
+            placementInfoLabel.setText("");
         }
     }
 
@@ -353,10 +525,18 @@ public class GamePanel extends JPanel {
             if (btnContinue != null) {
                 btnContinue.setEnabled(true);
             }
+            // Habilitar el botón Salir durante la fase de colocación
+            if (btnExit != null) {
+                btnExit.setEnabled(true);
+            }
         } else {
             // Deshabilitar el botón Continuar durante la batalla
             if (btnContinue != null) {
                 btnContinue.setEnabled(false);
+            }
+            // Deshabilitar el botón Salir durante la batalla
+            if (btnExit != null) {
+                btnExit.setEnabled(false);
             }
             CellState[][] enemyBoard = battleShip.getEnemyBoard();
             if (enemyBoard != null) {

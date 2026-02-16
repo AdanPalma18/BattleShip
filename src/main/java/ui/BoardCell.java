@@ -51,6 +51,7 @@ public class BoardCell extends JPanel {
         addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
+                // Asegurarse de que el click siempre se procese
                 if(listener != null){
                     listener.cellClicked(row, col);
                 }
@@ -58,10 +59,19 @@ public class BoardCell extends JPanel {
 
             @Override
             public void mousePressed(MouseEvent e) {
-                // Si la celda tiene un barco, iniciar drag desde cualquier parte
+                // Durante la batalla, NO hacer nada - solo permitir que mouseClicked funcione
+                // Solo permitir drag durante la fase de colocación
+                // Verificar si hay un TransferHandler válido
                 if (hasShip() && getTransferHandler() != null) {
-                    getTransferHandler().exportAsDrag(BoardCell.this, e, TransferHandler.COPY);
+                    // Verificar si estamos en fase de colocación antes de permitir drag
+                    // Si no hay TransferHandler válido (NONE), no hacer nada
+                    if (getTransferHandler().getSourceActions(BoardCell.this) != TransferHandler.NONE) {
+                        // Solo iniciar drag si realmente hay un TransferHandler válido
+                        // NO consumir el evento para que mouseClicked también se dispare
+                        getTransferHandler().exportAsDrag(BoardCell.this, e, TransferHandler.COPY);
+                    }
                 }
+                // IMPORTANTE: NO consumir el evento - permitir que mouseClicked se dispare siempre
             }
         });
     }
@@ -69,6 +79,14 @@ public class BoardCell extends JPanel {
     public void setState(CellState newState) {
         System.out.println("Acutalizando color: " + newState);
         this.state = newState;
+        
+        // Si el estado cambia a MISS, HIT, o SUNK, limpiar la imagen del barco
+        // porque estos estados no deben mostrar barcos
+        if (newState == CellState.MISS || newState == CellState.HIT || newState == CellState.SUNK) {
+            clearShipImage();
+            clearShipInfo();
+        }
+        
         updateColor();
     }
 
